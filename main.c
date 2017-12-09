@@ -6,6 +6,7 @@
 
 #define true            1
 #define false           0
+#define boolean unsigned char
 #define MAX_INP_SIZE    1024
 #define EXIT_COMMAND    "exit"
 #define HELP_STRING     "A linux shell by Arad and Or Nevo.\nType 'exit' to exit.\n"
@@ -17,7 +18,12 @@ void getInputString(char *dest);
 // Returns an array of all passed parameters
 char ** tokenize(char *toParse);
 
-void launch(char **args);
+void launch(char **args, boolean isAmperPresent);
+
+// Returns whether there's an '&' appended to the command.
+// Removes it from the args.
+boolean findAmper(char **args);
+
 
 /* Main function */
 int main(void) {
@@ -37,31 +43,53 @@ int main(void) {
             continue; // retry
 
         // Act according to the input
-        launch(args);
+        launch(args, findAmper(args));
 
         // Free allocated space
         free(args);
     }
 }
 
+
 /* Helpers */
 // Handles the actual launching
-void launch(char **args) {
-    int exitStatus;
+void launch(char **args, boolean concurrently) {
+    int exitStatus, childPID;
 
     // Test if should exit
     if(!strcmp(args[0], EXIT_COMMAND))
         exit(0);
 
     // Fork to make sure the called program does not replace the shell
-    if(fork() == 0) { // If in child process
+    if((childPID = fork()) == 0) { // If in child process
         if(execvp(args[0], args) == -1) { // If error
             printf("Failed to launch \"%s\".\n", args[0]);
             exit(1);
         }
     }
-    // If parent process, wait for child
-    wait(&exitStatus);
+
+    // If parent process and no &, wait for child
+    if(!concurrently)
+        waitpid(childPID, &exitStatus, 0);
+    else
+        printf("[%d]\n", childPID);
+}
+
+/* Parameters parsing */
+// Returns whether there's an '&' appended to the command.
+// Removes it from the args.
+boolean findAmper(char **args) {
+    int i;
+    for(i = 0; args[i]; i++) {
+        // If last parameter and is &
+        if(args[i+1] == NULL && !strcmp(args[i], "&")) {
+            // Terminate the args earlier
+            args[i] = NULL;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // This function receives the next input
@@ -79,7 +107,7 @@ void getInputString(char *dest) {
     }
 
     // NULL terminate
-    *dest = NULL;
+    *dest = '\0';
 }
 
 
