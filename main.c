@@ -33,6 +33,9 @@ int main(void) {
         getInputString(input);
         args = tokenize(input);
 
+        if(args[0] == NULL) // if no input
+            continue; // retry
+
         // Act according to the input
         launch(args);
 
