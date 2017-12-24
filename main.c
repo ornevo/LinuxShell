@@ -26,6 +26,10 @@ char* findRedirectionFile(char redirectionSym, char **args);
 
 void redirect(char* redirectionFile, int redirectionFileno);
 
+void executeCommand(char **args);
+
+char ** findPipeCommand(char **args);
+
 // Returns whether there's an '&' appended to the command.
 // Removes it from the args.
 boolean findAmper(char **args);
@@ -60,8 +64,9 @@ int main(void) {
 /* Helpers */
 // Handles the actual launching
 void launch(char **args, boolean concurrently) {
-    int exitStatus, childPID, redirectionFD;
+    int exitStatus, childPID, redirectionFD, pipePD[2];
     char* redirectionFile = NULL;
+    char **pipedCommand = NULL;
 
     // Test if should exit
     if(!strcmp(args[0], EXIT_COMMAND))
@@ -74,11 +79,27 @@ void launch(char **args, boolean concurrently) {
             redirect(redirectionFile, STDOUT_FILENO);
         else if((redirectionFile = findRedirectionFile('<', args))) // If redirect input
             redirect(redirectionFile, STDIN_FILENO);
+        else if((pipedCommand = findPipeCommand(args))) { // Pipe
+            // Try to open pipe
+            if(pipe(pipePD) == -1){
+                puts("Failed to open pipe. Aborting...");
+                exit(1);
+            }
 
-        if(execvp(args[0], args) == -1) { // If error
-            printf("Failed to launch \"%s\".\n", args[0]);
-            exit(1);
+            // Execute commands
+            if(fork() == 0) { // If in child process
+                // Set the input of the child to the corresponding side of the pipe
+                dup2(pipePD[0], STDIN_FILENO);
+                // execute the pipe-right-side command
+                executeCommand(pipedCommand);
+            } else
+                // If in parent process, set output to the corresponding side of the pipe
+                // We execute the command in a few lines, so no need to re-execute here
+                dup2(pipePD[1], STDOUT_FILENO);
+
         }
+
+        executeCommand(args);
     }
 
     // If parent process and no &, wait for child
@@ -114,6 +135,13 @@ void redirect(char* redirectionFile, int redirectionFileno){
     }
 
     close(redirectionFD);
+}
+
+void executeCommand(char **args) {
+    if(execvp(args[0], args) == -1) { // If error
+        printf("Failed to launch \"%s\".\n", args[0]);
+        exit(1);
+    }
 }
 
 /* Parameters parsing */
@@ -152,6 +180,20 @@ char* findRedirectionFile(char redirectionSym, char **args) {
             return args[i+1];
         }
     }
+
+    return NULL;
+}
+
+// This function find a pipe in the command, and returns the command
+//  which the output should be piped into
+// Returns NULL if no pipe was specified.
+char ** findPipeCommand(char **args){
+    int i;
+    for (i = 0; args[i]; i++)
+        if(args[i][0] == '|' && args[i+1]) {
+            args[i] = NULL;
+            return &(args[i+1]);
+        }
 
     return NULL;
 }
