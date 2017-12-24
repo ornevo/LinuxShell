@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #define true            1
@@ -19,6 +21,10 @@ void getInputString(char *dest);
 char ** tokenize(char *toParse);
 
 void launch(char **args, boolean isAmperPresent);
+
+char* findRedirectionFile(char redirectionSym, char **args);
+
+void redirect(char* redirectionFile, int redirectionFileno);
 
 // Returns whether there's an '&' appended to the command.
 // Removes it from the args.
@@ -54,7 +60,8 @@ int main(void) {
 /* Helpers */
 // Handles the actual launching
 void launch(char **args, boolean concurrently) {
-    int exitStatus, childPID;
+    int exitStatus, childPID, redirectionFD;
+    char* redirectionFile = NULL;
 
     // Test if should exit
     if(!strcmp(args[0], EXIT_COMMAND))
@@ -62,6 +69,12 @@ void launch(char **args, boolean concurrently) {
 
     // Fork to make sure the called program does not replace the shell
     if((childPID = fork()) == 0) { // If in child process
+        // Do file redirection
+        if((redirectionFile = findRedirectionFile('>', args))) // If redirect output
+            redirect(redirectionFile, STDOUT_FILENO);
+        else if((redirectionFile = findRedirectionFile('<', args))) // If redirect input
+            redirect(redirectionFile, STDIN_FILENO);
+
         if(execvp(args[0], args) == -1) { // If error
             printf("Failed to launch \"%s\".\n", args[0]);
             exit(1);
@@ -73,6 +86,34 @@ void launch(char **args, boolean concurrently) {
         waitpid(childPID, &exitStatus, 0);
     else
         printf("[%d]\n", childPID);
+}
+
+/* General helpers */
+// This handles the redirection of stream with fd 'redirectionFileno'
+//  to the file named 'redirectionFile'
+void redirect(char* redirectionFile, int redirectionFileno){
+    int redirectionFD = 0, access;
+
+    // Determine the FD to replace
+    if(redirectionFileno == STDOUT_FILENO) access = O_WRONLY;
+    else access = O_RDONLY;
+
+    // Try to open the redirectionFile
+    redirectionFD = open(redirectionFile, (access | O_CREAT), 0777);//(S_IWRITE | S_IREAD));
+
+    // If failed to open
+    if(redirectionFD == -1) {
+        printf("Failed to open file %s for redirection.\n", redirectionFile);
+        exit(1);
+    }
+
+    // Try to replace the FD
+    if(dup2(redirectionFD, redirectionFileno) == -1) {
+        puts("Failed to redirect io. Aborting...");
+        exit(1);
+    }
+
+    close(redirectionFD);
 }
 
 /* Parameters parsing */
@@ -90,6 +131,29 @@ boolean findAmper(char **args) {
     }
 
     return false;
+}
+
+// This function tests for io redirection, and
+//  if exists returns the file name.
+//  else returns NULL
+// :param redirectionSym: either '>' or '<'. What to look for.
+char* findRedirectionFile(char redirectionSym, char **args) {
+    int i;
+    for (i = 0; args[i]; i++) {
+        if(args[i][0] == redirectionSym) {
+            // If there is more than one parameter after the '>/<'
+            // Or the parameter where the file name should be is empty
+            if(args[i+2] || !args[i+1]){
+                puts("Illegal file name for io redirection. Aborting...");
+                exit(1);
+            }
+            // If legal
+            args[i] = NULL; // Terminate parameters to execvp before redirection
+            return args[i+1];
+        }
+    }
+
+    return NULL;
 }
 
 // This function receives the next input
